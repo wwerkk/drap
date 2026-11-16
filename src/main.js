@@ -15,6 +15,30 @@ let last = performance.now();
 let analyser = null;
 let buf = null;
 
+const MAX_DELAY = 30; // seconds of buffer
+let audioCtx = null;
+let delayNode = null;
+let delay = 0; // target playback delay (s)
+let shown = 0; // smoothed playhead position (s)
+
+function maxDelay() {
+  return Math.min(MAX_DELAY, (canvas.width - 1) / PPS);
+}
+
+function setDelayFromX(clientX) {
+  const x = (clientX - canvas.getBoundingClientRect().left) * dpr;
+  delay = Math.min(Math.max((canvas.width - 1 - x) / PPS, 0), maxDelay());
+  if (delayNode) delayNode.delayTime.setTargetAtTime(delay, audioCtx.currentTime, 0.05);
+}
+
+canvas.addEventListener("pointerdown", (e) => {
+  canvas.setPointerCapture(e.pointerId);
+  setDelayFromX(e.clientX);
+});
+canvas.addEventListener("pointermove", (e) => {
+  if (canvas.hasPointerCapture(e.pointerId)) setDelayFromX(e.clientX);
+});
+
 function resize() {
   canvas.width = Math.floor(canvas.clientWidth * dpr);
   canvas.height = Math.floor(canvas.clientHeight * dpr);
@@ -46,7 +70,7 @@ function drawRuler() {
     ctx.fillRect(x, h - len, 1, len);
     if (major) {
       ctx.textAlign = k === 0 ? "right" : "center";
-      ctx.fillText(k === 0 ? "0s" : `${k / 10}s`, x, h - 14 * dpr);
+      ctx.fillText(k === 0 ? "0s" : `-${k / 10}s`, x, h - 14 * dpr);
     }
   }
 }
@@ -86,6 +110,10 @@ function draw(now) {
   }
 
   drawRuler();
+
+  shown += (delay - shown) * 0.3;
+  ctx.fillStyle = "red";
+  ctx.fillRect(w - 1 - shown * PPS - dpr, 0, 2 * dpr, h);
 }
 requestAnimationFrame(draw);
 
@@ -99,12 +127,16 @@ async function start() {
       autoGainControl: false,
     },
   });
-  const audioCtx = new AudioContext();
+  audioCtx = new AudioContext();
   const source = audioCtx.createMediaStreamSource(stream);
   analyser = audioCtx.createAnalyser();
   analyser.fftSize = 2048;
   buf = new Float32Array(analyser.fftSize);
-  source.connect(analyser); // not connected to output: no feedback
+  source.connect(analyser);
+  delayNode = audioCtx.createDelay(MAX_DELAY); // the buffer; delayTime = read tap
+  delayNode.delayTime.value = delay;
+  source.connect(delayNode);
+  delayNode.connect(audioCtx.destination);
   hint.classList.add("hidden");
   last = performance.now();
 }
