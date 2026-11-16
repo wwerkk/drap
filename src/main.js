@@ -5,38 +5,87 @@ const hint = document.getElementById("hint");
 const dpr = window.devicePixelRatio || 1;
 const PPS = Math.max(10, Math.round((100 * dpr) / 10) * 10); // canvas px per second, multiple of 10
 const RULER_H = 30 * dpr;
+const MAX_DELAY = 30; // seconds of buffer
+const DOUBLE_TAP_MS = 300;
 
 let mins = new Float32Array(0);
 let maxs = new Float32Array(0);
 let head = 0; // oldest column
-let total = 0; // columns pushed since start
 let acc = 0;
 let last = performance.now();
 let analyser = null;
 let buf = null;
-
-const MAX_DELAY = 30; // seconds of buffer
 let audioCtx = null;
-let delayNode = null;
-let delay = 0; // target playback delay (s)
-let shown = 0; // smoothed playhead position (s)
+let master = null;
+
+// playheads[i] = { delay, shown, node } or null; i = 0..9 (keys 1..9,0)
+const playheads = new Array(10).fill(null);
+let selected = null; // index armed by last key press
+let dragging = null; // index being dragged
+const lastTap = new Array(10).fill(0);
 
 function maxDelay() {
   return Math.min(MAX_DELAY, (canvas.width - 1) / PPS);
 }
 
-function setDelayFromX(clientX) {
+function updateGain() {
+  if (!master) return;
+  const n = playheads.filter(Boolean).length;
+  master.gain.setTargetAtTime(n ? 1 / n : 1, audioCtx.currentTime, 0.05);
+}
+
+function ensureNode(p) {
+  if (!audioCtx || p.node) return;
+  p.node = audioCtx.createDelay(MAX_DELAY);
+  p.node.delayTime.value = p.delay;
+  source.connect(p.node);
+  p.node.connect(master);
+}
+
+function setDelay(i, clientX) {
   const x = (clientX - canvas.getBoundingClientRect().left) * dpr;
-  delay = Math.min(Math.max((canvas.width - 1 - x) / PPS, 0), maxDelay());
-  if (delayNode) delayNode.delayTime.setTargetAtTime(delay, audioCtx.currentTime, 0.05);
+  const d = Math.min(Math.max((canvas.width - 1 - x) / PPS, 0), maxDelay());
+  let p = playheads[i];
+  if (!p) {
+    p = playheads[i] = { delay: d, shown: d, node: null };
+    ensureNode(p);
+    updateGain();
+  }
+  p.delay = d;
+  if (p.node) p.node.delayTime.setTargetAtTime(d, audioCtx.currentTime, 0.05);
+}
+
+function removePlayhead(i) {
+  const p = playheads[i];
+  if (!p) return;
+  if (p.node) p.node.disconnect();
+  playheads[i] = null;
+  updateGain();
 }
 
 canvas.addEventListener("pointerdown", (e) => {
+  if (selected === null) return;
   canvas.setPointerCapture(e.pointerId);
-  setDelayFromX(e.clientX);
+  dragging = selected;
+  setDelay(dragging, e.clientX);
 });
 canvas.addEventListener("pointermove", (e) => {
-  if (canvas.hasPointerCapture(e.pointerId)) setDelayFromX(e.clientX);
+  if (dragging !== null) setDelay(dragging, e.clientX);
+});
+canvas.addEventListener("pointerup", () => (dragging = null));
+canvas.addEventListener("pointercancel", () => (dragging = null));
+
+window.addEventListener("keydown", (e) => {
+  if (e.repeat || dragging !== null || !/^[0-9]$/.test(e.key)) return;
+  const i = e.key === "0" ? 9 : Number(e.key) - 1;
+  const now = performance.now();
+  if (now - lastTap[i] < DOUBLE_TAP_MS) {
+    removePlayhead(i);
+    lastTap[i] = 0;
+  } else {
+    lastTap[i] = now;
+  }
+  selected = i;
 });
 
 function resize() {
@@ -53,7 +102,6 @@ function push(lo, hi) {
   mins[head] = lo;
   maxs[head] = hi;
   head = (head + 1) % mins.length;
-  total++;
 }
 
 function drawRuler() {
@@ -61,7 +109,6 @@ function drawRuler() {
   const h = canvas.height;
   ctx.fillStyle = "#666";
   ctx.font = `${10 * dpr}px monospace`;
-  ctx.textAlign = "center";
   const step = PPS / 10; // 0.1s
   for (let k = 0; k * step < w; k++) {
     const x = w - 1 - k * step;
@@ -73,6 +120,21 @@ function drawRuler() {
       ctx.fillText(k === 0 ? "0s" : `-${k / 10}s`, x, h - 14 * dpr);
     }
   }
+}
+
+function drawPlayheads() {
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.font = `${12 * dpr}px monospace`;
+  ctx.textAlign = "left";
+  playheads.forEach((p, i) => {
+    if (!p) return;
+    p.shown += (p.delay - p.shown) * 0.3;
+    const x = w - 1 - p.shown * PPS;
+    ctx.fillStyle = "red";
+    ctx.fillRect(x - dpr, 0, 2 * dpr, h);
+    ctx.fillText((i + 1) % 10, x + 4 * dpr, 14 * dpr);
+  });
 }
 
 function draw(now) {
@@ -110,12 +172,11 @@ function draw(now) {
   }
 
   drawRuler();
-
-  shown += (delay - shown) * 0.3;
-  ctx.fillStyle = "red";
-  ctx.fillRect(w - 1 - shown * PPS - dpr, 0, 2 * dpr, h);
+  drawPlayheads();
 }
 requestAnimationFrame(draw);
+
+let source = null;
 
 async function start() {
   window.removeEventListener("click", start);
@@ -128,15 +189,15 @@ async function start() {
     },
   });
   audioCtx = new AudioContext();
-  const source = audioCtx.createMediaStreamSource(stream);
+  source = audioCtx.createMediaStreamSource(stream);
   analyser = audioCtx.createAnalyser();
   analyser.fftSize = 2048;
   buf = new Float32Array(analyser.fftSize);
   source.connect(analyser);
-  delayNode = audioCtx.createDelay(MAX_DELAY); // the buffer; delayTime = read tap
-  delayNode.delayTime.value = delay;
-  source.connect(delayNode);
-  delayNode.connect(audioCtx.destination);
+  master = audioCtx.createGain();
+  master.connect(audioCtx.destination);
+  playheads.forEach((p) => p && ensureNode(p));
+  updateGain();
   hint.classList.add("hidden");
   last = performance.now();
 }
