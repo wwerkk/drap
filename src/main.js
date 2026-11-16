@@ -3,9 +3,10 @@ const ctx = canvas.getContext("2d");
 const hint = document.getElementById("hint");
 
 const dpr = window.devicePixelRatio || 1;
-const PPS = Math.max(10, Math.round((100 * dpr) / 10) * 10); // canvas px per second, multiple of 10
+const VISIBLE_SECONDS = 5;
+let PPS = 1;
 const RULER_H = 30 * dpr;
-const MARGIN = 48 * dpr; // inert L/R zones for new clicks
+const MARGIN = 0 * dpr; // inert L/R zones for new clicks
 const MAX_DELAY = 30; // seconds of buffer
 const DOUBLE_TAP_MS = 300;
 
@@ -95,6 +96,7 @@ window.addEventListener("keydown", (e) => {
 function resize() {
   canvas.width = Math.floor(canvas.clientWidth * dpr);
   canvas.height = Math.floor(canvas.clientHeight * dpr);
+  PPS = canvas.width / VISIBLE_SECONDS;
   mins = new Float32Array(canvas.width);
   maxs = new Float32Array(canvas.width);
   head = 0;
