@@ -5,6 +5,7 @@ const hint = document.getElementById("hint");
 const dpr = window.devicePixelRatio || 1;
 const PPS = Math.max(10, Math.round((100 * dpr) / 10) * 10); // canvas px per second, multiple of 10
 const RULER_H = 30 * dpr;
+const MARGIN = 48 * dpr; // inert L/R zones for new clicks
 const MAX_DELAY = 30; // seconds of buffer
 const DOUBLE_TAP_MS = 300;
 
@@ -38,7 +39,7 @@ function ensureNode(p) {
   if (!audioCtx || p.node) return;
   p.node = audioCtx.createDelay(MAX_DELAY);
   p.node.delayTime.value = p.delay;
-  source.connect(p.node);
+  shaper.connect(p.node);
   p.node.connect(master);
 }
 
@@ -65,6 +66,9 @@ function removePlayhead(i) {
 
 canvas.addEventListener("pointerdown", (e) => {
   if (selected === null) return;
+  // L/R margins: ignore new clicks (dragging into them is still allowed)
+  const x = (e.clientX - canvas.getBoundingClientRect().left) * dpr;
+  if (x < MARGIN || x > canvas.width - MARGIN) return;
   canvas.setPointerCapture(e.pointerId);
   dragging = selected;
   setDelay(dragging, e.clientX);
@@ -171,12 +175,26 @@ function draw(now) {
     ctx.fillRect(x, top, 1, Math.max(1, bottom - top));
   }
 
+  ctx.fillStyle = "rgba(0,0,0,0.06)";
+  ctx.fillRect(0, 0, MARGIN, h);
+  ctx.fillRect(w - MARGIN, 0, MARGIN, h);
+
   drawRuler();
   drawPlayheads();
 }
 requestAnimationFrame(draw);
 
-let source = null;
+let shaper = null;
+let fb = null;
+const fbSlider = document.getElementById("fbSlider");
+const fbValue = document.getElementById("fbValue");
+
+function applyFeedback() {
+  const v = Number(fbSlider.value);
+  fbValue.textContent = v.toFixed(2);
+  if (fb) fb.gain.setTargetAtTime(v, audioCtx.currentTime, 0.02);
+}
+fbSlider.addEventListener("input", applyFeedback);
 
 async function start() {
   window.removeEventListener("click", start);
@@ -189,13 +207,32 @@ async function start() {
     },
   });
   audioCtx = new AudioContext();
-  source = audioCtx.createMediaStreamSource(stream);
+  const source = audioCtx.createMediaStreamSource(stream);
+
+  // write head (time 0): input + feedback -> tanh clipper -> buffer taps
+  const bus = audioCtx.createGain();
+  bus.gain.value = 1 / 3;
+  shaper = audioCtx.createWaveShaper();
+  const curve = new Float32Array(1025);
+  for (let i = 0; i < curve.length; i++) {
+    curve[i] = Math.tanh(3 * ((i * 2) / (curve.length - 1) - 1)); // = tanh(input)
+  }
+  shaper.curve = curve;
+  shaper.oversample = "2x";
+  source.connect(bus);
+  bus.connect(shaper);
+
   analyser = audioCtx.createAnalyser();
   analyser.fftSize = 2048;
   buf = new Float32Array(analyser.fftSize);
-  source.connect(analyser);
+  shaper.connect(analyser); // shows what is written to the buffer
+
   master = audioCtx.createGain();
   master.connect(audioCtx.destination);
+  fb = audioCtx.createGain();
+  master.connect(fb);
+  fb.connect(bus);
+  applyFeedback();
   playheads.forEach((p) => p && ensureNode(p));
   updateGain();
   hint.classList.add("hidden");
