@@ -116,13 +116,13 @@ function drawRuler() {
   ctx.fillStyle = "#666";
   ctx.font = `${10 * dpr}px monospace`;
   const step = PPS / 10; // 0.1s
-  for (let k = 0; k * step < w; k++) {
-    const x = w - 1 - k * step;
+  for (let k = 0; k * step <= w; k++) {
+    const x = Math.max(0, Math.round(w - 1 - k * step));
     const major = k % 10 === 0;
     const len = major ? 10 * dpr : 5 * dpr;
     ctx.fillRect(x, h - len, 1, len);
     if (major) {
-      ctx.textAlign = k === 0 ? "right" : "center";
+      ctx.textAlign = k === 0 ? "right" : x < 20 * dpr ? "left" : "center";
       ctx.fillText(k === 0 ? "0s" : `-${k / 10}s`, x, h - 14 * dpr);
     }
   }
