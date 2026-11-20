@@ -22,7 +22,7 @@ let master = null;
 
 // playheads[i] = { delay, shown, node } or null; i = 0..9 (keys 1..9,0)
 const playheads = new Array(10).fill(null);
-let selected = null; // index armed by last key press
+let selected = 0; // index armed by last key press
 let dragging = null; // index being dragged
 const lastTap = new Array(10).fill(0);
 
