@@ -7,7 +7,7 @@ const VISIBLE_SECONDS = 5;
 let PPS = 1;
 const RULER_H = 30 * dpr;
 const MARGIN = 0 * dpr; // inert L/R zones for new clicks
-const MAX_DELAY = 30; // seconds of buffer
+const MAX_DELAY = 5; // seconds of buffer
 const DOUBLE_TAP_MS = 300;
 
 let mins = new Float32Array(0);
