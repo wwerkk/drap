@@ -213,7 +213,7 @@ async function start() {
 
   // write head (time 0): input + feedback -> tanh clipper -> buffer taps
   const bus = audioCtx.createGain();
-  bus.gain.value = 1 / 3;
+  bus.gain.value = 1;
   shaper = audioCtx.createWaveShaper();
   const curve = new Float32Array(1025);
   for (let i = 0; i < curve.length; i++) {
